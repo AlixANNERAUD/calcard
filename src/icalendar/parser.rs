@@ -1231,12 +1231,11 @@ fn strip_qp_soft_breaks(encoding: Encoding, text: &mut Cow<'_, [u8]>) {
     }
 }
 
+/// URI parameter values (ALTREP, DIR, MEMBER, SENT-BY, ...) follow the same
+/// rule as URI property values, see [`uri_value`].
 impl From<Token<'_>> for Uri {
     fn from(token: Token<'_>) -> Self {
-        token
-            .into_uri_bytes()
-            .map(Uri::Data)
-            .unwrap_or_else(Uri::Location)
+        uri_value(token)
     }
 }
 

@@ -8,7 +8,7 @@
 
 mod common;
 
-use calcard::icalendar::{ICalendarProperty, ICalendarValue, Uri};
+use calcard::icalendar::{ICalendarParameterValue, ICalendarProperty, ICalendarValue, Uri};
 use common::*;
 
 #[test]
@@ -167,5 +167,44 @@ fn uri_line_breaks_are_percent_encoded() {
     assert_eq!(
         written_lines(&written),
         ["URL:https://x.example/a%0D%0Ab\tc\u{1}d"]
+    );
+}
+
+// --- URI parameter values follow the same rule ---
+
+#[test]
+fn uri_parameter_data_non_canonical_is_kept_verbatim() {
+    assert_round_trip(
+        &["DESCRIPTION;ALTREP=\"data:text/plain;charset=iso-8859-1,caf%E9\":Café"],
+        &["DESCRIPTION;ALTREP=\"data:text/plain;charset=iso-8859-1,caf%E9\":Café"],
+    );
+}
+
+#[test]
+fn uri_parameter_data_canonical_is_decoded() {
+    let ical = assert_round_trip(
+        &["DESCRIPTION;ALTREP=\"data:text/plain;base64,SGVsbG8=\":Hello"],
+        &["DESCRIPTION;ALTREP=\"data:text/plain;base64,SGVsbG8=\":Hello"],
+    );
+    let entry = ical.components[1]
+        .entries
+        .iter()
+        .find(|e| e.name == ICalendarProperty::Description)
+        .unwrap();
+    assert!(matches!(
+        &entry.params[0].value,
+        ICalendarParameterValue::Uri(Uri::Data(d)) if d.data == b"Hello"
+    ));
+}
+
+#[test]
+fn uri_parameter_location() {
+    assert_round_trip(
+        &[
+            "ATTENDEE;SENT-BY=\"mailto:a,b@x.example\";DELEGATED-FROM=\"mailto:c@x.example\":mailto:d@x.example",
+        ],
+        &[
+            "ATTENDEE;SENT-BY=\"mailto:a,b@x.example\";DELEGATED-FROM=\"mailto:c@x.example\":mailto:d@x.example",
+        ],
     );
 }
