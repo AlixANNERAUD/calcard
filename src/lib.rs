@@ -53,6 +53,9 @@ pub struct Parser<'x> {
     pub(crate) unquote: bool,
     pub(crate) skip_ws: bool,
     pub(crate) strip_ctl: bool,
+    /// Whether backslash escape sequences are decoded. Disabled for value
+    /// types such as URI that define no escaping (RFC 5545, Section 3.3.13).
+    pub(crate) unescape: bool,
     pub(crate) token_buf: Vec<Token<'x>>,
     pub(crate) last_token_end: usize,
 }
@@ -74,6 +77,7 @@ impl<'x> Parser<'x> {
             unquote: true,
             skip_ws: false,
             strip_ctl: false,
+            unescape: true,
             token_buf: Vec::with_capacity(10),
             last_token_end: usize::MAX,
         }

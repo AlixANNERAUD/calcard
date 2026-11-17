@@ -37,6 +37,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = true;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_single_value(&mut self) {
@@ -50,6 +51,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = false;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_multi_value_comma(&mut self) {
@@ -63,6 +65,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = true;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_multi_value_semicolon(&mut self) {
@@ -76,6 +79,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = false;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_multi_value_semicolon_and_comma(&mut self) {
@@ -89,6 +93,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = false;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_param_value(&mut self) {
@@ -102,6 +107,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = true;
         self.strip_ctl = true;
+        self.unescape = true;
     }
 
     pub(crate) fn expect_rrule_value(&mut self) {
@@ -115,6 +121,7 @@ impl<'x> Parser<'x> {
         self.stop_dot = false;
         self.skip_ws = true;
         self.strip_ctl = false;
+        self.unescape = true;
     }
 
     fn try_unfold(&mut self) -> bool {
@@ -212,7 +219,7 @@ impl<'x> Parser<'x> {
                         break;
                     }
                 }
-                b'\\' => {
+                b'\\' if self.unescape => {
                     let mut next_ch = b'\\';
                     let mut next_offset_end = idx;
                     while let Some((idx, ch)) = self.iter.next() {

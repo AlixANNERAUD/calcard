@@ -12,7 +12,7 @@ use crate::{
     },
     icalendar::{
         ValueSeparator,
-        writer::{write_component_begin, write_component_end},
+        writer::{write_component_begin, write_component_end, write_raw_uri},
     },
 };
 use std::{
@@ -68,6 +68,9 @@ impl ArchivedICalendarEntry {
 
         out.write_atomic(self.name.as_str())?;
 
+        let (default_type, separator) = self.name.default_types();
+        let default_type = default_type.unwrap_ical();
+
         if matches!(
             self.values.first().as_ref(),
             Some(ArchivedICalendarValue::Binary(_))
@@ -107,7 +110,7 @@ impl ArchivedICalendarEntry {
                 }
                 ArchivedICalendarParameterValue::Uri(uri) => {
                     out.write_atomic("\"")?;
-                    write_uri(out, uri, false)?;
+                    write_param_uri(out, uri)?;
                     out.write_atomic("\"")?;
                 }
                 ArchivedICalendarParameterValue::Cutype(v) => {
@@ -159,13 +162,12 @@ impl ArchivedICalendarEntry {
         out.write_atomic(":")?;
 
         if with_value {
-            let (default_type, separator) = self.name.default_types();
             let separator = if !matches!(separator, ValueSeparator::Comma) {
                 ";"
             } else {
                 ","
             };
-            let default_type = default_type.unwrap_ical();
+            let value_type = types.unwrap_or(&default_type);
 
             for (pos, value) in self.values.iter().enumerate() {
                 if pos > 0 {
@@ -182,11 +184,11 @@ impl ArchivedICalendarEntry {
                         continue;
                     }
                     ArchivedICalendarValue::Uri(v) => {
-                        write_uri(out, v, true)?;
+                        write_uri_value(out, v)?;
                         continue;
                     }
                     ArchivedICalendarValue::PartialDateTime(v) => {
-                        v.format_as_ical(out, types.unwrap_or(&default_type))?;
+                        v.format_as_ical(out, value_type)?;
                         continue;
                     }
                     ArchivedICalendarValue::Duration(v) => {
@@ -210,11 +212,14 @@ impl ArchivedICalendarEntry {
                         continue;
                     }
                     ArchivedICalendarValue::Text(v) => {
-                        let escape = !matches!(
-                            types.unwrap_or(&default_type),
-                            ArchivedICalendarValueType::Recur
-                        );
-                        write_text(out, v, escape, escape)?;
+                        match value_type {
+                            ArchivedICalendarValueType::Uri
+                            | ArchivedICalendarValueType::CalAddress => {
+                                write_raw_uri(out, v)?;
+                            }
+                            ArchivedICalendarValueType::Recur => write_text(out, v, false, false)?,
+                            _ => write_text(out, v, true, true)?,
+                        }
                         continue;
                     }
                     ArchivedICalendarValue::CalendarScale(v) => v.as_str(),
@@ -236,10 +241,27 @@ impl ArchivedICalendarEntry {
     }
 }
 
-pub(crate) fn write_uri<W: Write>(
+/// Writes a URI or CAL-ADDRESS property value verbatim, see
+/// [`crate::icalendar::writer::write_uri_value`].
+pub(crate) fn write_uri_value<W: Write>(
     out: &mut FoldingWriter<'_, W>,
     value: &ArchivedUri,
-    escape: bool,
+) -> std::fmt::Result {
+    match value {
+        ArchivedUri::Data(v) => {
+            out.write_str("data:")?;
+            write_raw_uri(out, v.content_type.as_deref().unwrap_or_default())?;
+            out.write_str(";base64,")?;
+            write_bytes(out, &v.data)
+        }
+        ArchivedUri::Location(v) => write_raw_uri(out, v),
+    }
+}
+
+/// Writes a URI held in a quoted parameter value (ALTREP, DIR, ...).
+pub(crate) fn write_param_uri<W: Write>(
+    out: &mut FoldingWriter<'_, W>,
+    value: &ArchivedUri,
 ) -> std::fmt::Result {
     match value {
         ArchivedUri::Data(v) => {
@@ -247,14 +269,10 @@ pub(crate) fn write_uri<W: Write>(
             out.write_str("data:")?;
             out.write_str(media_type)?;
             out.write_str(";")?;
-            if escape {
-                out.write_atomic("base64\\,")?;
-            } else {
-                out.write_atomic("base64,")?;
-            }
+            out.write_atomic("base64,")?;
             write_bytes(out, &v.data)
         }
-        ArchivedUri::Location(v) => write_text(out, v, escape, escape),
+        ArchivedUri::Location(v) => write_text(out, v, false, false),
     }
 }
 

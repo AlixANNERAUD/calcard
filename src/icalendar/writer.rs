@@ -62,6 +62,9 @@ impl ICalendarEntry {
 
         out.write_atomic(self.name.as_str())?;
 
+        let (default_type, separator) = self.name.default_types();
+        let default_type = default_type.unwrap_ical();
+
         if matches!(self.values.first(), Some(ICalendarValue::Binary(_))) {
             out.write_atomic(";ENCODING=BASE64")?;
         }
@@ -98,7 +101,7 @@ impl ICalendarEntry {
                 }
                 ICalendarParameterValue::Uri(uri) => {
                     out.write_atomic("\"")?;
-                    write_uri(out, uri, false)?;
+                    write_param_uri(out, uri)?;
                     out.write_atomic("\"")?;
                 }
                 ICalendarParameterValue::Cutype(v) => {
@@ -149,13 +152,12 @@ impl ICalendarEntry {
 
         out.write_atomic(":")?;
 
-        let (default_type, separator) = self.name.default_types();
         let separator = if !matches!(separator, ValueSeparator::Comma) {
             ";"
         } else {
             ","
         };
-        let default_type = default_type.unwrap_ical();
+        let value_type = types.unwrap_or(&default_type);
 
         for (pos, value) in self.values.iter().enumerate() {
             if pos > 0 {
@@ -172,11 +174,11 @@ impl ICalendarEntry {
                     continue;
                 }
                 ICalendarValue::Uri(v) => {
-                    write_uri(out, v, true)?;
+                    write_uri_value(out, v)?;
                     continue;
                 }
                 ICalendarValue::PartialDateTime(v) => {
-                    v.format_as_ical(out, types.unwrap_or(&default_type))?;
+                    v.format_as_ical(out, value_type)?;
                     continue;
                 }
                 ICalendarValue::Duration(v) => {
@@ -200,9 +202,13 @@ impl ICalendarEntry {
                     continue;
                 }
                 ICalendarValue::Text(v) => {
-                    let escape =
-                        !matches!(types.unwrap_or(&default_type), ICalendarValueType::Recur);
-                    write_text(out, v, escape, escape)?;
+                    match value_type {
+                        ICalendarValueType::Uri | ICalendarValueType::CalAddress => {
+                            write_raw_uri(out, v)?;
+                        }
+                        ICalendarValueType::Recur => write_text(out, v, false, false)?,
+                        _ => write_text(out, v, true, true)?,
+                    }
                     continue;
                 }
                 ICalendarValue::CalendarScale(v) => v.as_str(),
@@ -224,10 +230,41 @@ impl ICalendarEntry {
     }
 }
 
-pub(crate) fn write_uri<W: Write>(
+/// Writes a URI or CAL-ADDRESS property value. RFC 5545, Section 3.3.13
+/// defines no escaping for URI values, so the value is written as it is.
+pub(crate) fn write_uri_value<W: Write>(
     out: &mut FoldingWriter<'_, W>,
     value: &Uri,
-    escape: bool,
+) -> std::fmt::Result {
+    match value {
+        Uri::Data(v) => {
+            out.write_str("data:")?;
+            write_raw_uri(out, v.content_type.as_deref().unwrap_or_default())?;
+            out.write_str(";base64,")?;
+            write_bytes(out, &v.data)
+        }
+        Uri::Location(v) => write_raw_uri(out, v),
+    }
+}
+
+/// Writes URI text verbatim. The only change is the percent-encoding of CR
+/// and LF, which would otherwise end the content line (RFC 5545, Section
+/// 3.1) and are not valid URI characters anyway (RFC 3986). Folding is left
+/// to the [`FoldingWriter`].
+pub(crate) fn write_raw_uri(out: &mut impl Write, value: &str) -> std::fmt::Result {
+    let mut rest = value;
+    while let Some(pos) = rest.find(['\r', '\n']) {
+        out.write_str(&rest[..pos])?;
+        write!(out, "%{:02X}", rest.as_bytes()[pos])?;
+        rest = &rest[pos + 1..];
+    }
+    out.write_str(rest)
+}
+
+/// Writes a URI held in a quoted parameter value (ALTREP, DIR, ...).
+pub(crate) fn write_param_uri<W: Write>(
+    out: &mut FoldingWriter<'_, W>,
+    value: &Uri,
 ) -> std::fmt::Result {
     match value {
         Uri::Data(v) => {
@@ -235,14 +272,10 @@ pub(crate) fn write_uri<W: Write>(
             out.write_str("data:")?;
             out.write_str(media_type)?;
             out.write_str(";")?;
-            if escape {
-                out.write_atomic("base64\\,")?;
-            } else {
-                out.write_atomic("base64,")?;
-            }
+            out.write_atomic("base64,")?;
             write_bytes(out, &v.data)
         }
-        Uri::Location(v) => write_text(out, v, escape, escape),
+        Uri::Location(v) => write_text(out, v, false, false),
     }
 }
 

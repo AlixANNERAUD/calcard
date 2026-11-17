@@ -8,7 +8,7 @@ use super::*;
 use crate::{
     Entry, Parser, StopChar, Token,
     common::{
-        CalendarScale, Encoding, PartialDateTime,
+        CalendarScale, Data, Encoding, PartialDateTime,
         parser::{Boolean, Integer, parse_digits, parse_small_digits},
     },
     icalendar::{ICalendarDay, ICalendarWeekday},
@@ -161,7 +161,30 @@ impl Parser<'_> {
             // Parse value
             if params.stop_char != StopChar::Lf {
                 // Obtain default type and separator
-                let (default_type, multi_value) = entry.name.default_types();
+                let (default_type, mut multi_value) = entry.name.default_types();
+                let value_type = match (&params.data_type, &default_type) {
+                    (Some(data_type), _) => {
+                        Some(*data_type.iana().unwrap_or(&ICalendarValueType::Text))
+                    }
+                    (None, ValueType::Ical(default_type)) => Some(*default_type),
+                    _ => None,
+                };
+
+                // URI and CAL-ADDRESS values define no escaping (RFC 5545,
+                // Section 3.3.13): a backslash is an ordinary character and
+                // both ',' and ';' are legal URI characters. Such values are
+                // therefore read verbatim, and as a single value even on
+                // properties that are otherwise multi-valued (such as X-
+                // properties with VALUE=URI), since no separator can be told
+                // apart from the URI itself. The writer is symmetric.
+                let is_uri = matches!(
+                    value_type,
+                    Some(ICalendarValueType::Uri | ICalendarValueType::CalAddress)
+                );
+                if is_uri {
+                    multi_value = ValueSeparator::None;
+                }
+
                 match multi_value {
                     ValueSeparator::None => {
                         self.expect_single_value();
@@ -183,6 +206,9 @@ impl Parser<'_> {
                         self.unfold_qp = true;
                     }
                     _ => {}
+                }
+                if is_uri {
+                    self.unescape = false;
                 }
 
                 if matches!(
@@ -299,12 +325,7 @@ impl Parser<'_> {
                                         ICalendarValue::Text(token.into_string())
                                     }
                                     ICalendarValueType::Uri | ICalendarValueType::CalAddress => {
-                                        token
-                                            .into_uri_bytes()
-                                            .map(|data| ICalendarValue::Uri(Uri::Data(data)))
-                                            .unwrap_or_else(|uri| {
-                                                ICalendarValue::Uri(Uri::Location(uri))
-                                            })
+                                        ICalendarValue::Uri(uri_value(token))
                                     }
                                     ICalendarValueType::Duration => {
                                         if let Some(duration) =
@@ -1044,6 +1065,19 @@ impl ICalendarDuration {
 impl IanaParse for ICalendarDuration {
     fn parse(value: &[u8]) -> Option<Self> {
         ICalendarDuration::try_parse(&mut value.iter().peekable())
+    }
+}
+
+/// Parses a URI value. A `data:` URI is only decoded into [`Uri::Data`] when
+/// writing it back yields the same text; any other form (extra media type
+/// parameters, percent-encoded data, different case) is kept verbatim as a
+/// [`Uri::Location`] so that it round-trips unchanged.
+fn uri_value(token: Token<'_>) -> Uri {
+    match Data::try_parse(token.text.as_ref()) {
+        Some(data) if data.to_unwrapped_string().as_bytes() == token.text.as_ref() => {
+            Uri::Data(data)
+        }
+        _ => Uri::Location(token.into_string()),
     }
 }
 
