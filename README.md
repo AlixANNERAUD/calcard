@@ -6,11 +6,13 @@ This is a maintained fork of [`stalwartlabs/calcard`](https://github.com/stalwar
 - Inline binary (`VALUE=BINARY`, or `ENCODING=BASE64` on `ATTACH` and `IMAGE`) stays binary instead of being turned into text.
 - `CHARSET` and `ENCODING` parameters survive a round trip, and quoted-printable without `CHARSET` is decoded as UTF-8 when valid.
 - Unknown backslash escapes such as `\x` are kept literally.
+- `data:` URIs in parameter values (`ALTREP`, `DIR`, ...) are kept verbatim unless they round-trip exactly.
+- Unknown `RRULE` parts (`X-` names and other IANA parts) are kept and written back.
 
 The fork stays under the original `MIT OR Apache-2.0` licence and contains no code from the relicensed upstream. It is not published to crates.io; use it as a git dependency:
 
 ```toml
-calcard = { git = "https://github.com/AlixANNERAUD/calcard", tag = "v0.3.15-fronde.1" }
+calcard = { git = "https://github.com/AlixANNERAUD/calcard", tag = "v0.3.16-fronde.1" }
 ```
 
 The upstream notice, kept for reference:

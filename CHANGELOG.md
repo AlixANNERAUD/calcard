@@ -1,3 +1,9 @@
+calcard 0.3.16 (fronde fork)
+================================
+- Fix: `data:` URIs in URI parameter values (`ALTREP`, `DIR`, `MEMBER`, `SENT-BY`, ...) were always rebuilt as base64, losing media type parameters such as `charset`. They now follow the property value rule: decoded into `Uri::Data` only when writing them back gives the same text, kept as `Uri::Location` otherwise.
+- Fix: unknown `RRULE` parts (`X-` names and IANA parts not modelled here) were dropped. They are now kept in the new `ICalendarRecurrenceRule::other_parts` field as `(name, value)` pairs and written back after the known parts.
+- Format change: `ICalendarRecurrenceRule` has a new public field, `other_parts`. Code that builds the struct with a literal must add it (or use `..Default::default()`). The rkyv layout changes, so archives written by earlier versions must be rebuilt. With serde the field is omitted when empty and defaults to empty, so existing JSON still deserializes.
+
 calcard 0.3.15 (fronde fork)
 ================================
 - Fix: iCalendar URI and CAL-ADDRESS values were written with TEXT escaping, turning `,` and `;` into `\,` and `\;` (RFC 5545, Section 3.3.13). They are now written and read verbatim; only CR and LF are percent-encoded. X- properties with `VALUE=URI` hold a single URI value, since `,` and `;` are legal URI characters.
