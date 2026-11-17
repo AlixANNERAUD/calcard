@@ -220,6 +220,7 @@ impl<'x> Parser<'x> {
                     }
                 }
                 b'\\' if self.unescape => {
+                    let backslash_idx = idx;
                     let mut next_ch = b'\\';
                     let mut next_offset_end = idx;
                     while let Some((idx, ch)) = self.iter.next() {
@@ -233,8 +234,15 @@ impl<'x> Parser<'x> {
                                         break;
                                     }
                                 } else {
+                                    // A lone backslash at the end of the line is
+                                    // kept as a literal character.
+                                    if offset_start == usize::MAX {
+                                        offset_start = backslash_idx;
+                                    } else if !buf.is_empty() {
+                                        buf.push(b'\\');
+                                    }
+                                    offset_end = backslash_idx;
                                     stop_char = StopChar::Lf;
-                                    offset_end = idx - 1;
                                     break 'outer;
                                 }
                             }
@@ -261,11 +269,16 @@ impl<'x> Parser<'x> {
                         offset_start = next_offset_end;
                     }
                     skipped_ws = usize::MAX;
-                    buf.push(match next_ch {
-                        b'n' | b'N' => b'\n',
-                        b'r' | b'R' => b'\r',
-                        _ => next_ch,
-                    });
+                    match next_ch {
+                        b'n' | b'N' => buf.push(b'\n'),
+                        b'r' | b'R' => buf.push(b'\r'),
+                        // RFC 5545/6350 escapes, plus those written for
+                        // parameter values and JSCOMPS by this crate.
+                        b'\\' | b';' | b',' | b':' | b'"' | b'=' => buf.push(next_ch),
+                        // Unknown escape: keep both characters, as readers
+                        // commonly do (e.g. a Windows path such as `C:\x`).
+                        _ => buf.extend_from_slice(&[b'\\', next_ch]),
+                    }
                     offset_end = next_offset_end;
                 }
                 b'"' if self.unquote => {
