@@ -133,6 +133,14 @@ pub struct ICalendarRecurrenceRule {
     pub wkst: Option<ICalendarWeekday>,
     pub rscale: Option<CalendarScale>,
     pub skip: Option<ICalendarSkip>,
+    /// Rule parts this crate does not model (X- names and other IANA
+    /// parts), as `(name, value)` pairs with the value as written. They are
+    /// written back after the known parts.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Vec::is_empty")
+    )]
+    pub other_parts: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

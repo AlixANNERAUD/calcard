@@ -959,11 +959,28 @@ impl Parser<'_> {
                 },
                 _ => {
                     if !self.strict {
-                        // Ignore unknown tokens
-                        while let Some(token) = self.token_until_lf(&mut last_stop_char) {                            if token.stop_char == StopChar::Semicolon{
-                                break;
+                        // Keep unknown parts (X- names and IANA parts this
+                        // crate does not model) with their value as written.
+                        let name = token.into_string();
+                        let mut value_range: Option<(usize, usize)> = None;
+                        if last_stop_char != StopChar::Semicolon {
+                            while let Some(token) = self.token_until_lf(&mut last_stop_char) {
+                                if !token.text.is_empty() {
+                                    value_range = Some((
+                                        value_range.map_or(token.start, |(start, _)| start),
+                                        token.end,
+                                    ));
+                                }
+                                if token.stop_char == StopChar::Semicolon {
+                                    break;
+                                }
                             }
                         }
+                        let value = value_range
+                            .and_then(|(start, end)| self.input.get(start..=end))
+                            .map(unfold_raw)
+                            .unwrap_or_default();
+                        rrule.other_parts.push((name, value));
                     } else {
                         is_valid = false;
                     }
@@ -977,23 +994,7 @@ impl Parser<'_> {
             Err(self
                 .input
                 .get(token_start..=self.last_token_end)
-                .map(|slice| {
-                    let mut buf = Vec::with_capacity(slice.len());
-                    let mut iter = slice.iter().peekable();
-
-                    while let Some(ch) = iter.next() {
-                        match ch {
-                            b'\r' => {}
-                            b'\n' => {
-                                iter.next_if(|ch| matches!(ch, b' ' | b'\t'));
-                            }
-                            _ => buf.push(*ch),
-                        }
-                    }
-
-                    String::from_utf8(buf)
-                        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
-                })
+                .map(unfold_raw)
                 .unwrap_or_default())
         } else {
             Err("".to_string())
@@ -1229,6 +1230,25 @@ fn strip_qp_soft_breaks(encoding: Encoding, text: &mut Cow<'_, [u8]>) {
         }
         *text = Cow::Owned(out);
     }
+}
+
+/// Returns raw input text with line folds removed.
+fn unfold_raw(slice: &[u8]) -> String {
+    let mut buf = Vec::with_capacity(slice.len());
+    let mut iter = slice.iter().peekable();
+
+    while let Some(ch) = iter.next() {
+        match ch {
+            b'\r' => {}
+            b'\n' => {
+                iter.next_if(|ch| matches!(ch, b' ' | b'\t'));
+            }
+            _ => buf.push(*ch),
+        }
+    }
+
+    String::from_utf8(buf)
+        .unwrap_or_else(|err| String::from_utf8_lossy(err.as_bytes()).into_owned())
 }
 
 /// URI parameter values (ALTREP, DIR, MEMBER, SENT-BY, ...) follow the same

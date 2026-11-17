@@ -433,6 +433,9 @@ impl Display for ICalendarRecurrenceRule {
         if let Some(skip) = &self.skip {
             write!(f, ";SKIP={}", skip.as_str())?;
         }
+        for part in self.other_parts.iter() {
+            write!(f, ";{}={}", part.0, part.1)?;
+        }
 
         Ok(())
     }
