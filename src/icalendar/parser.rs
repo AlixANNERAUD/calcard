@@ -25,6 +25,21 @@ struct Params {
     data_type: Option<IanaType<ICalendarValueType, String>>,
     charset: Option<String>,
     encoding: Option<Encoding>,
+    /// CHARSET and ENCODING parameters exactly as they were read, in order.
+    /// They are only re-emitted when the value was not decoded with them.
+    transfer_params: Vec<(TransferParam, ICalendarParameter)>,
+    /// At least one value was decoded using `encoding`.
+    encoding_applied: bool,
+    /// At least one value was decoded using `charset`.
+    charset_applied: bool,
+    /// At least one value could not be decoded and was kept as read.
+    kept_raw: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TransferParam {
+    Charset,
+    Encoding,
 }
 
 impl Parser<'_> {
@@ -52,6 +67,10 @@ impl Parser<'_> {
                 data_type: None,
                 encoding: None,
                 charset: None,
+                transfer_params: Vec::new(),
+                encoding_applied: false,
+                charset_applied: false,
+                kept_raw: false,
             };
 
             // Parse parameters
@@ -185,6 +204,19 @@ impl Parser<'_> {
                     multi_value = ValueSeparator::None;
                 }
 
+                // Inline binary: VALUE=BINARY, or a BASE64 encoding on ATTACH
+                // and IMAGE whose default URI type cannot hold base64 data
+                // (RFC 5545, Sections 3.3.1 and 3.8.1.1; RFC 7986, Section
+                // 5.10). The decoded bytes are kept as binary even when they
+                // happen to be valid UTF-8.
+                let keep_binary = params.encoding == Some(Encoding::Base64)
+                    && (value_type == Some(ICalendarValueType::Binary)
+                        || params.data_type.is_none()
+                            && matches!(
+                                entry.name,
+                                ICalendarProperty::Attach | ICalendarProperty::Image
+                            ));
+
                 match multi_value {
                     ValueSeparator::None => {
                         self.expect_single_value();
@@ -242,33 +274,70 @@ impl Parser<'_> {
                             }
                         }
 
-                        // Decode binary parts
+                        // Decode transfer encodings
                         if let Some(encoding) = params.encoding {
-                            let (bytes, default_encoding) = match encoding {
-                                Encoding::Base64 => (base64_decode(&token.text), None),
-                                Encoding::QuotedPrintable => {
-                                    (quoted_printable_decode(&token.text), "iso-8859-1".into())
-                                }
+                            let bytes = match encoding {
+                                Encoding::Base64 => base64_decode(&token.text),
+                                Encoding::QuotedPrintable => quoted_printable_decode(&token.text),
                             };
-                            if let Some(bytes) = bytes {
-                                if let Some(decoded) =
-                                    params.charset.as_deref().or(default_encoding).and_then(
-                                        |charset| {
-                                            charset_decoder(charset.as_bytes())
-                                                .map(|decoder| decoder(&bytes))
-                                        },
-                                    )
-                                {
-                                    token.text = Cow::Owned(decoded.into_bytes());
-                                } else if std::str::from_utf8(&bytes).is_ok() {
-                                    token.text = Cow::Owned(bytes);
-                                } else {
+
+                            match bytes {
+                                Some(bytes) if keep_binary => {
+                                    params.encoding_applied = true;
                                     entry.values.push(ICalendarValue::Binary(bytes));
                                     if eol {
                                         break;
                                     } else {
                                         continue;
                                     }
+                                }
+                                Some(bytes) => {
+                                    // Text sent with a transfer encoding is decoded and
+                                    // stored as UTF-8. The CHARSET and ENCODING parameters
+                                    // then no longer describe the value and are dropped;
+                                    // the writer emits plain (escaped) text instead.
+                                    if let Some(charset) = params.charset.as_deref() {
+                                        if let Some(decoder) = charset_decoder(charset.as_bytes()) {
+                                            token.text = Cow::Owned(decoder(&bytes).into_bytes());
+                                            params.encoding_applied = true;
+                                            params.charset_applied = true;
+                                        } else {
+                                            // Unknown charset: keep the value and its
+                                            // parameters exactly as they were read.
+                                            params.kept_raw = true;
+                                            strip_qp_soft_breaks(encoding, &mut token.text);
+                                        }
+                                    } else if std::str::from_utf8(&bytes).is_ok() {
+                                        token.text = Cow::Owned(bytes);
+                                        params.encoding_applied = true;
+                                    } else if encoding == Encoding::QuotedPrintable {
+                                        // Quoted-printable is a text encoding: without a
+                                        // CHARSET, bytes that are not UTF-8 are read as
+                                        // ISO-8859-1, which maps every byte to a character.
+                                        token.text = Cow::Owned(
+                                            bytes
+                                                .iter()
+                                                .map(|&b| b as char)
+                                                .collect::<String>()
+                                                .into_bytes(),
+                                        );
+                                        params.encoding_applied = true;
+                                    } else {
+                                        // Base64 data that is not text is kept as bytes,
+                                        // and written back with ENCODING=BASE64.
+                                        params.encoding_applied = true;
+                                        entry.values.push(ICalendarValue::Binary(bytes));
+                                        if eol {
+                                            break;
+                                        } else {
+                                            continue;
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // Undecodable: keep the value and its parameters.
+                                    params.kept_raw = true;
+                                    strip_qp_soft_breaks(encoding, &mut token.text);
                                 }
                             }
                         }
@@ -424,6 +493,19 @@ impl Parser<'_> {
                 entry.name,
                 ICalendarProperty::Begin | ICalendarProperty::End
             ) {
+                // Keep CHARSET and ENCODING unless the value was decoded with them
+                let keep_encoding =
+                    params.encoding.is_none() || params.kept_raw || !params.encoding_applied;
+                let keep_charset = !params.charset_applied || params.kept_raw;
+                for (kind, param) in params.transfer_params {
+                    if match kind {
+                        TransferParam::Encoding => keep_encoding,
+                        TransferParam::Charset => keep_charset,
+                    } {
+                        entry.params.push(param);
+                    }
+                }
+
                 // Add types
                 if let Some(data_type) = params.data_type {
                     entry.params.push(ICalendarParameter {
@@ -617,18 +699,64 @@ impl Parser<'_> {
             } else if !param_name.is_empty() {
                 match param_name.first() {
                     Some(b'c' | b'C') if param_name.as_ref().eq_ignore_ascii_case(b"charset") => {
+                        let name =
+                            ICalendarParameterName::Other(Token::new(param_name).into_string());
+                        if self.token_buf.is_empty() {
+                            params.transfer_params.push((
+                                TransferParam::Charset,
+                                ICalendarParameter::new(
+                                    name.clone(),
+                                    ICalendarParameterValue::Null,
+                                ),
+                            ));
+                        }
                         for token in self.token_buf.drain(..) {
-                            params.charset = token.into_string().into();
+                            let value = token.into_string();
+                            params.charset = Some(value.clone());
+                            params.transfer_params.push((
+                                TransferParam::Charset,
+                                ICalendarParameter::new(
+                                    name.clone(),
+                                    ICalendarParameterValue::Text(value),
+                                ),
+                            ));
                         }
                     }
                     Some(b'e' | b'E') if param_name.as_ref().eq_ignore_ascii_case(b"encoding") => {
+                        let name =
+                            ICalendarParameterName::Other(Token::new(param_name).into_string());
+                        if self.token_buf.is_empty() {
+                            params.transfer_params.push((
+                                TransferParam::Encoding,
+                                ICalendarParameter::new(
+                                    name.clone(),
+                                    ICalendarParameterValue::Null,
+                                ),
+                            ));
+                        }
                         for token in self.token_buf.drain(..) {
                             params.encoding = Encoding::parse(token.text.as_ref());
+                            params.transfer_params.push((
+                                TransferParam::Encoding,
+                                ICalendarParameter::new(
+                                    name.clone(),
+                                    ICalendarParameterValue::Text(token.into_string()),
+                                ),
+                            ));
                         }
                     }
                     _ => {
                         if params.encoding.is_none() && param_name.eq_ignore_ascii_case(b"base64") {
                             params.encoding = Some(Encoding::Base64);
+                            params.transfer_params.push((
+                                TransferParam::Encoding,
+                                ICalendarParameter::new(
+                                    ICalendarParameterName::Other(
+                                        Token::new(param_name).into_string(),
+                                    ),
+                                    ICalendarParameterValue::Null,
+                                ),
+                            ));
                         } else {
                             let name =
                                 ICalendarParameterName::Other(Token::new(param_name).into_string())
@@ -1078,6 +1206,28 @@ fn uri_value(token: Token<'_>) -> Uri {
             Uri::Data(data)
         }
         _ => Uri::Location(token.into_string()),
+    }
+}
+
+/// Removes quoted-printable soft line breaks (`=` at the end of a line) from a
+/// value that is kept encoded, since the line structure is not preserved.
+fn strip_qp_soft_breaks(encoding: Encoding, text: &mut Cow<'_, [u8]>) {
+    if encoding == Encoding::QuotedPrintable && text.contains(&b'\n') {
+        let mut out = Vec::with_capacity(text.len());
+        let mut iter = text.iter().peekable();
+        while let Some(&ch) = iter.next() {
+            if ch == b'=' && matches!(iter.peek(), Some(b'\r' | b'\n')) {
+                while let Some(b'\r' | b'\n') = iter.peek() {
+                    let is_lf = iter.next() == Some(&b'\n');
+                    if is_lf {
+                        break;
+                    }
+                }
+            } else {
+                out.push(ch);
+            }
+        }
+        *text = Cow::Owned(out);
     }
 }
 

@@ -159,6 +159,15 @@ impl ArchivedICalendarEntry {
             }
         }
 
+        // RFC 5545 requires VALUE=BINARY next to ENCODING=BASE64 on
+        // properties whose default type is URI (ATTACH, IMAGE, ...).
+        if matches!(self.values.first(), Some(ArchivedICalendarValue::Binary(_)))
+            && matches!(default_type, ArchivedICalendarValueType::Uri)
+            && types.is_none()
+        {
+            out.write_atomic(";VALUE=BINARY")?;
+        }
+
         out.write_atomic(":")?;
 
         if with_value {
