@@ -1,4 +1,20 @@
-> [!IMPORTANT]
+## Fork
+
+This is a maintained fork of [`stalwartlabs/calcard`](https://github.com/stalwartlabs/calcard). The upstream repository is archived at 0.3.14, and development continued inside the Stalwart repository under the AGPL-3.0 licence. This fork, on the `fronde` branch, carries fixes on top of the last MIT/Apache release:
+
+- iCalendar URI and CAL-ADDRESS values are read and written as they are, without TEXT backslash escaping (RFC 5545, Section 3.3.13).
+- Inline binary (`VALUE=BINARY`, or `ENCODING=BASE64` on `ATTACH` and `IMAGE`) stays binary instead of being turned into text.
+- `CHARSET` and `ENCODING` parameters survive a round trip, and quoted-printable without `CHARSET` is decoded as UTF-8 when valid.
+- Unknown backslash escapes such as `\x` are kept literally.
+
+The fork stays under the original `MIT OR Apache-2.0` licence and contains no code from the relicensed upstream. It is not published to crates.io; use it as a git dependency:
+
+```toml
+calcard = { git = "https://github.com/AlixANNERAUD/calcard", tag = "v0.3.15-fronde.1" }
+```
+
+The upstream notice, kept for reference:
+
 > **This repository is archived.** Development of the iCalendar, vCard, JSCalendar and JSContact library has moved to the [Stalwart repository](https://github.com/stalwartlabs/stalwart), where it is maintained as part of Stalwart. This repository is read-only and kept for reference; `calcard` 0.3.14 is the last version published from here.
 
 # calcard

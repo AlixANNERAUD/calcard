@@ -1,3 +1,13 @@
+calcard 0.3.15 (fronde fork)
+================================
+- Fix: iCalendar URI and CAL-ADDRESS values were written with TEXT escaping, turning `,` and `;` into `\,` and `\;` (RFC 5545, Section 3.3.13). They are now written and read verbatim; only CR and LF are percent-encoded. X- properties with `VALUE=URI` hold a single URI value, since `,` and `;` are legal URI characters.
+- Fix: `data:` URIs that would not be written back identically (extra media type parameters, percent-encoded data) were normalized; they are now kept as `Uri::Location`.
+- Fix: inline base64 binary that happened to be valid UTF-8 was stored as text and lost `ENCODING=BASE64`. `VALUE=BINARY`, or `ENCODING=BASE64` on `ATTACH` and `IMAGE`, now always yields binary, and `VALUE=BINARY` is added on write where RFC 5545 requires it.
+- Fix: `CHARSET` and `ENCODING` parameters were dropped on every property. They are now kept unless they were used to decode the value (text sent with a transfer encoding is still decoded and written as plain TEXT).
+- Fix: quoted-printable without `CHARSET` was always decoded as ISO-8859-1. UTF-8 is now tried first, with ISO-8859-1 as the fallback.
+- Fix: unknown backslash escapes such as `\x` lost their backslash, and a backslash at the end of a line was dropped. Both are now kept literally (iCalendar and vCard).
+- Added raw-output round-trip tests.
+
 calcard 0.3.14
 ================================
 - Updated JSCalendar conversion rules according to `draft-ietf-calext-jscalendar-icalendar-26` and `draft-ietf-calext-jscalendarbis-20`.

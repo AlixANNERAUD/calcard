@@ -1,12 +1,11 @@
 [package]
 name = "calcard"
 description = "iCalendar/JSCalendar and vCard/JSContact parsing, building and conversion library for Rust"
-version = "0.3.14"
+version = "0.3.15"
 authors = [ "Stalwart Labs <hello@stalw.art>"]
 license = "Apache-2.0 OR MIT"
 edition = "2024"
-repository = "https://github.com/stalwartlabs/calcard"
-homepage = "https://github.com/stalwartlabs/calcard"
+repository = "https://github.com/AlixANNERAUD/calcard"
 keywords = ["icalendar", "vcard", "jscalendar", "jscontact", "parser"]
 categories = ["date-and-time", "email", "parser-implementations"]
 readme = "README.md"
